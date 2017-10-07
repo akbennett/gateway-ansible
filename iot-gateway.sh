@@ -19,4 +19,5 @@ ansibletags=${1:-gateway}
 ansible-playbook -e "mqttuser=$cloudmqttuser mqttpass=$cloudmqttpw mqtthost=$cloudmqtthost mqttport=$cloudmqttport "\
                  -e "gitci=$gitci" \
                  -e "brokerhost=$hostname brokeruser='' brokerpw=''" \
+                 --extra-vars "ansible_sudo_pass=linaro "\
                  -u $gatewayuser -i $hostname, iot-gateway.yml --tags $ansibletags

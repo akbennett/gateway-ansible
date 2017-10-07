@@ -1,0 +1,11 @@
+[Unit]
+Description=OSF Container Agent Service
+after=docker.service
+after=bluetooth.service
+
+[Service]
+EnvironmentFile=-/etc/default/busybox-syslog
+ExecStart=/home/linaro/osfagent.sh
+
+[Install]
+WantedBy=multi-user.target

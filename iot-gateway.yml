@@ -1,4 +1,4 @@
-# An ansible playbook to start the appropriate containers on a iot-gateway
+# An ansible playbook to start the appropriate containers to configure the device
 #
 # note: docker commands are used and not the ansible docker utilities to remove
 # additional dependencies on the target system
@@ -7,31 +7,13 @@
 #  - install ansible,
 #  - create and copy ssh key
 #  - run playbook with appropriate parameters
-#    i.e. ansible-playbook -e "mqttuser= mqttpass= mqtthost= mqttport= gitci= tag=" -i targethost, iot-gateway.yml
-#    where tag is the default docker tag (e.g. latest)
+#    i.e. use the gateway tag to configure the device as a gateway
 
-# There are Ansible tags below for the following gateway personalities
-#
-# gateway - start default containers for the gateway
-#  + minimal mosquitto broker (local mqtt port on 1883, websocket port on 9001)
-#  + nginx-http-proxy (expects gitci.com IP as hawkbit will run on a different system)
-#  + bt-joiner
-#  + NGINX CoAP proxy (expects gitci.com IP as Leshan will run on a different system)
-#  + CF CoAP-HTTP proxy
-# cloud - start containers configured to bridge mqtt data to the cloud
-#  + mosquitto configured for use with cloud service (i.e. Bluemix or Cloudmqtt)
-#  + nginx-http-proxy (expects gitci.com IP as hawkbit will run on a different system)
-#  + bt-joiner
-# local - configured to run all services directly on the gateway
-#  + minimal mosquitto broker (local mqtt port on 1883, websocket port on 9001)
-#  + hawkbit (running on gateway device)
-#  + bt-joiner
-#  + freeboard
-#  + CF CoAP-HTTP proxy
-#  + leshan
-#
-# There are also ansible tags for the individual items;
-#   mosquitto-local, mosquitto-cloud, nginx-http-proxy, bt-joiner, freeboard, etc...
+# NOTE: Linux microPlatform personalities managed by the agent
+# This job
+#   1. copies the systemd job to launch the agent process on boot
+#   2. creates a compose config file (used by the agent)
+#   3. reboots
 
 # This task removes all containers
 - hosts: all
@@ -39,188 +21,32 @@
   tasks:
   - name: Cleanup for containers for group roll-out
     command: sh -c "if [ $(docker ps -a -q | head -c1 | wc -c) -ne 0 ]; then "\
-                       "docker stop $(docker ps -aq); "\
-                       "docker rm $(docker ps -aq); "\
+                       "docker rm -f $(docker ps -aq); "\
                    "fi"
   tags:
     - cleanall
     - gateway
-    - demo
-    - cloud
-    - local
 
-# Mosquitto broker, cloudmqtt or IBM bluemix
-- hosts: all
-  gather_facts: no
-  vars:
-    mqttconnection: mqtt-generic
-  tasks:
-  - name: Copy mosquitto config file
-    template:
-      src: mosquitto.conf
-      dest: /home/linaro/mosquitto.conf
-  - name: Start mosquitto container
-    command: sh -c "docker stop mosquitto; docker rm mosquitto; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/mosquitto:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host --read-only "\
-                           "-v /home/linaro/mosquitto.conf:/etc/mosquitto/conf.d/mosquitto.conf "\
-                           "--name mosquitto {{ hub|default('linarotechnologies') }}/mosquitto:{{ tag|default('latest') }}"
-  tags:
-    - cloud
-    - mosquitto-cloud
-
-# Mosquitto 'minimal' broker
+# configure agent
 - hosts: all
   gather_facts: no
   tasks:
-  - name: Copy mosquitto config file
+  - name: copy run script
     copy:
-      src: mosquitto-minimal.conf
-      dest: /home/linaro/mosquitto.conf
-  - name: Start mosquitto container
-    command: sh -c "docker stop mosquitto; docker rm mosquitto; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/mosquitto:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host --read-only "\
-                           "-v /home/linaro/mosquitto.conf:/etc/mosquitto/conf.d/mosquitto.conf "\
-                           "--name mosquitto {{ hub|default('linarotechnologies') }}/mosquitto:{{ tag|default('latest') }}"
-  tags:
-    - mosquitto-local
-    - gateway
-    - demo
-    - local
-
-# NGINX HTTP Proxy
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Copy nginx config file
+      src: osfagent.sh
+      dest: /home/linaro/osfagent.sh
+      mode: 0755
+  - name: create systemd job
     copy:
-      src: nginx-http-proxy.conf
-      dest: /home/linaro/nginx-http-proxy.conf
-  - name: Run nginx-http-proxy container
-    command: sh -c "docker stop nginx-http-proxy; docker rm nginx-http-proxy; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/nginx:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host "\
-                           "--read-only --tmpfs=/var/run --tmpfs=/var/cache/nginx "\
-                           "--add-host=gitci.com:{{ gitci }} "\
-                           "-v /home/linaro/nginx-http-proxy.conf:/etc/nginx/nginx.conf "\
-                           "--name nginx-http-proxy {{ hub|default('linarotechnologies') }}/nginx:{{ tag|default('latest') }} "\
-                           "nginx-debug -g 'daemon off;'"
+      src: osfagent.service
+      dest: /etc/systemd/system/osfagent.service
+  - name: add target for agent
+    command: sh -c "echo https://github.com/akbennett/docker-compose-gateway master > /home/linaro/osftargets.conf"
+  - name: enable service
+    become: true
+    systemd:
+        name: osfagent
+        enabled: yes
+        state: reloaded
   tags:
-    - nginx-http-proxy
     - gateway
-    - demo
-    - cloud
-
-# Bt-Joiner
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Copy bluetooth_6lowpand config file
-    copy:
-      src: bluetooth_6lowpand.conf
-      dest: /home/linaro/bluetooth_6lowpand.conf
-  - name: Run bt-joiner container
-    command: sh -c "docker stop bt-joiner; docker rm bt-joiner; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/bt-joiner:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --privileged --net=host "\
-                           "--read-only --tmpfs=/var/run --tmpfs=/var/lock --tmpfs=/var/log "\
-                           "-v /home/linaro/bluetooth_6lowpand.conf:/etc/bluetooth/bluetooth_6lowpand.conf "\
-                           "--name bt-joiner {{ hub|default('linarotechnologies') }}/bt-joiner:{{ tag|default('latest') }}"
-  tags:
-    - bt-joiner
-    - demo
-    - gateway
-    - local
-    - cloud
-
-# hawkbit
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Run hawkbit container (note takes 2-3 minutes to start on some systems)
-    command: sh -c "docker stop hawkbit; docker rm hawkbit; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/hawkbit-update-server:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host "\
-                           "--add-host=gitci.com:{{ gitci|default('127.0.0.1') }} "\
-                           "--name hawkbit {{ hub|default('linarotechnologies') }}/hawkbit-update-server:{{ tag|default('latest') }}"
-  tags:
-    - hawkbit
-    - local
-
-# Freeboard
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: create dashboard directory
-    file: path=/home/linaro/dashboards state=directory mode=0755
-  - name: Copy default freeboard dashboard
-    template:
-      src: dashboards/default.json
-      dest: /home/linaro/dashboards/default.json
-  - name: Copy simple freeboard dashboard
-    template:
-      src: dashboards/simple.json
-      dest: /home/linaro/dashboards/simple.json
-  - name: Run freeboard container
-    command: sh -c "docker stop freeboard; docker rm freeboard; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/freeboard:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t -p 80:80 "\
-                           "-v /home/linaro/dashboards/default.json:/usr/share/nginx/html/default.json "\
-                           "-v /home/linaro/dashboards/default.json:/usr/share/nginx/html/dashboard.json "\
-                           "-v /home/linaro/dashboards:/usr/share/nginx/html/dashboards "\
-                           "--name freeboard {{ hub|default('linarotechnologies') }}/freeboard:{{ tag|default('latest') }}"
-  tags:
-    - freeboard
-    - demo
-    - local
-
-# NGINX CoAP Proxy
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Copy nginx config file
-    copy:
-      src: nginx-lwm2m.conf
-      dest: /home/linaro/nginx-lwm2m.conf
-  - name: Run nginx CoAP proxy container
-    command: sh -c "docker stop nginx-coap-proxy; docker rm nginx-coap-proxy; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/nginx:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host "\
-                           "--read-only --tmpfs=/var/run  --add-host=gitci.com:{{ gitci }} "\
-                           "-v /home/linaro/nginx-lwm2m.conf:/etc/nginx/nginx.conf "\
-                           "--name nginx-coap-proxy {{ hub|default('linarotechnologies') }}/nginx:{{ tag|default('latest') }} "\
-                           "nginx-debug -g 'daemon off;'"
-  tags:
-    - nginx-coap-proxy
-    - demo
-    - gateway
-
-# CF CoAP-HTTP Proxy
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Run CF CoAP-HTTP proxy container
-    command: sh -c "docker stop cf-proxy-coap-http; docker rm cf-proxy-coap-http; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/cf-proxy-coap-http:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host --read-only "\
-                           "--name cf-proxy-coap-http {{ hub|default('linarotechnologies') }}/cf-proxy-coap-http:{{ tag|default('latest') }}"
-  tags:
-    - cf-proxy-coap-http
-    - demo
-    - gateway
-    - local
-
-# LWM2M Leshan
-- hosts: all
-  gather_facts: no
-  tasks:
-  - name: Run LWM2M Leshan container
-    command: sh -c "docker stop leshan; docker rm leshan; "\
-                   "docker pull {{ hub|default('linarotechnologies') }}/leshan:{{ tag|default('latest') }}; "\
-                   "docker run --restart=always -d -t --net=host --read-only "\
-                           "-e LESHAN_ARGS='-wp 8081' --tmpfs=/tmp "\
-                           "--name leshan {{ hub|default('linarotechnologies') }}/leshan:{{ tag|default('latest') }}"
-  tags:
-    - leshan
-    - local
