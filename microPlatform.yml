@@ -25,7 +25,7 @@
                    "fi"
   tags:
     - cleanall
-    - gateway
+    - demo
 
 # configure agent
 - hosts: all
@@ -36,19 +36,51 @@
       src: osfagent.sh
       dest: /home/linaro/osfagent.sh
       mode: 0755
-  - name: create systemd job
+  - name: copy osfagent service
     copy:
       src: osfagent.service
       dest: /etc/systemd/system/osfagent.service
   - name: copy osftargest.conf
     copy:
-      src: osftargets.conf
+      src: targets/{{ target }}
       dest: /home/linaro/osftargets.conf
-  - name: enable service
-    become: true
-    systemd:
-        name: osfagent
-        enabled: yes
-        state: reloaded
+  tags:
+    - microPlatform
+    - demo
+
+# gateway
+- hosts: all
+  gather_facts: no
+  tasks:
+  - name: gateway
+    command: sh -c "echo https://github.com/akbennett/docker-compose-gateway master "\
+                   ">> /home/linaro/osftargets.conf"
   tags:
     - gateway
+    - demo
+
+# freeboard
+- hosts: all
+  gather_facts: no
+  tasks:
+  - name: freeboard
+    command: sh -c "echo https://github.com/akbennett/docker-compose-freeboard master "\
+                   ">> /home/linaro/osftargets.conf"
+  tags:
+    - freeboard
+    - demo
+
+# enable service
+- hosts: all
+  gather_facts: no
+  tasks:
+  - name: enable service
+    become: true
+    become_method: sudo
+    systemd:
+      name: osfagent
+      enabled: yes
+      state: reloaded
+  tags:
+    - service
+    - demo
