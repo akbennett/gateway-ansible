@@ -40,8 +40,10 @@
     copy:
       src: osfagent.service
       dest: /etc/systemd/system/osfagent.service
-  - name: add target for agent
-    command: sh -c "echo https://github.com/akbennett/docker-compose-gateway master > /home/linaro/osftargets.conf"
+  - name: copy osftargest.conf
+    copy:
+      src: osftargets.conf
+      dest: /home/linaro/osftargets.conf
   - name: enable service
     become: true
     systemd:
